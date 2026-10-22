@@ -212,7 +212,7 @@ export default function PagoServicios() {
     : null
 
   return (
-    <main className="pt-[64px] min-h-screen">
+    <main className=" min-h-screen">
       <div className="max-w-5xl mx-auto px-6 lg:px-14 py-14">
 
         <p className="section-label mb-3 text-[#0015FF]">Portal de pagos</p>

@@ -13,7 +13,8 @@ export default function Redes() {
   const mostrar = videos.slice(0, 6)
 
   return (
-    <main className="pt-[64px] bg-[#111] min-h-screen">
+    <main className="px-3 sm:px-6 pt-3 sm:pt-6 pb-6 sm:pb-8">
+      <div className="bg-[#111] rounded-[2rem] overflow-hidden min-h-[70vh]">
 
       {/* header */}
       <div className="max-w-7xl mx-auto px-6 lg:px-14 py-20">
@@ -64,6 +65,7 @@ export default function Redes() {
             ))}
           </div>
         )}
+      </div>
       </div>
     </main>
   )

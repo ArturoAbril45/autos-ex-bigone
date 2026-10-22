@@ -16,22 +16,11 @@ export function AuthProvider({ children }) {
   }, [])
 
   async function login(email, password) {
-    // Primero verificar usuarios creados desde el panel
-    const locales = JSON.parse(localStorage.getItem('bigone_admin_usuarios') || '[]')
-    const local = locales.find(u => u.email === email && u.password === password && u.activo !== false)
-    if (local) {
-      localStorage.setItem('admin_token', 'local-' + local.id)
-      localStorage.setItem('admin_name',  local.nombre)
-      localStorage.setItem('admin_rol',   local.rol || 'asesor')
-      setAdmin({ name: local.nombre, rol: local.rol || 'asesor' })
-      return
-    }
-    // Fallback al backend (siempre admin)
     const data = await api.post('/admin/login', { email, password })
     localStorage.setItem('admin_token', data.token)
     localStorage.setItem('admin_name',  data.name)
-    localStorage.setItem('admin_rol',   'admin')
-    setAdmin({ name: data.name, rol: 'admin' })
+    localStorage.setItem('admin_rol',   data.rol || 'admin')
+    setAdmin({ name: data.name, rol: data.rol || 'admin' })
   }
 
   function logout() {

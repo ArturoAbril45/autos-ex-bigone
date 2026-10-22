@@ -35,15 +35,15 @@ export default function AdminLayout({ children }) {
     <div className="min-h-screen bg-[#FFE600] flex">
 
       {/* sidebar */}
-      <aside className={`fixed inset-y-0 left-0 z-40 w-56 bg-white border-r border-[#E8E8E8] flex flex-col
-        transition-transform duration-200 ${open ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}>
+      <aside className={`fixed inset-y-3 left-3 z-40 w-56 bg-white rounded-[1.5rem] shadow-[0_18px_50px_rgba(0,0,0,0.14)] flex flex-col overflow-hidden
+        transition-transform duration-200 ${open ? 'translate-x-0' : '-translate-x-[130%]'} lg:translate-x-0`}>
 
         <div className="px-5 py-5 border-b border-[#E8E8E8]">
           <img src="/images/logo.png" alt="Big One" className="h-12 w-auto object-contain" />
           <div className="text-[9px] font-bold uppercase tracking-[0.3em] text-[#6B6B6B] mt-2">Panel Admin</div>
         </div>
 
-        <nav className="flex-1 py-3 px-2 flex flex-col gap-0.5">
+        <nav className="flex-1 py-3 px-2 flex flex-col gap-0.5 overflow-y-auto">
           {nav.map(n => (
             <NavLink key={n.to} to={n.to} end={n.exact}
               onClick={() => setOpen(false)}
@@ -68,7 +68,7 @@ export default function AdminLayout({ children }) {
       {open && <div className="fixed inset-0 z-30 bg-black/20 lg:hidden" onClick={() => setOpen(false)} />}
 
       {/* main */}
-      <div className="flex-1 lg:ml-56 flex flex-col min-h-screen">
+      <div className="flex-1 lg:ml-[248px] flex flex-col min-h-screen">
         <header className="h-14 bg-[#0015FF] border-b border-white/10 flex items-center px-5 gap-3 sticky top-0 z-20">
           <button className="lg:hidden text-white/60 hover:text-white" onClick={() => setOpen(!open)}>
             {open ? <X size={18} /> : <Menu size={18} />}

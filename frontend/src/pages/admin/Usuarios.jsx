@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Plus, Pencil, Trash2, X, Eye, EyeOff, UserCheck, UserX } from 'lucide-react'
+import { api } from '../../lib/api'
+import { useAuth } from '../../context/AuthContext'
 
 const empty = { nombre: '', email: '', password: '', rol: 'asesor', activo: true }
 
@@ -12,10 +14,10 @@ function Field({ label, children }) {
   )
 }
 
-function Modal({ title, onClose, onSave, form, setForm }) {
+function Modal({ title, onClose, onSave, saving, esEdicion, form, setForm }) {
   const [verPass, setVerPass] = useState(false)
   function set(k, v) { setForm(f => ({ ...f, [k]: v })) }
-  const ok = form.nombre.trim() && form.email.trim() && form.password.trim()
+  const ok = form.nombre.trim() && form.email.trim() && (esEdicion || form.password.trim())
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={onClose}>
@@ -39,11 +41,11 @@ function Modal({ title, onClose, onSave, form, setForm }) {
               className="w-full border border-[#E8E8E8] text-sm px-3 py-2 text-[#111] focus:outline-none focus:border-[#0015FF]" />
           </Field>
 
-          <Field label="Contraseña">
+          <Field label={esEdicion ? 'Nueva contraseña (opcional)' : 'Contraseña'}>
             <div className="relative">
               <input type={verPass ? 'text' : 'password'} value={form.password}
                 onChange={e => set('password', e.target.value)}
-                placeholder="Mínimo 6 caracteres"
+                placeholder={esEdicion ? 'Dejar en blanco para no cambiarla' : 'Mínimo 6 caracteres'}
                 className="w-full border border-[#E8E8E8] text-sm px-3 py-2 pr-9 text-[#111] focus:outline-none focus:border-[#0015FF]" />
               <button type="button" onClick={() => setVerPass(v => !v)}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#6B6B6B] hover:text-[#111]">
@@ -72,9 +74,9 @@ function Modal({ title, onClose, onSave, form, setForm }) {
             className="px-5 py-2 border border-[#E8E8E8] text-[#6B6B6B] text-sm hover:text-[#111]">
             Cancelar
           </button>
-          <button onClick={onSave} disabled={!ok}
+          <button onClick={onSave} disabled={!ok || saving}
             className="px-5 py-2 bg-[#0015FF] text-white font-bold text-sm uppercase tracking-wide hover:bg-[#0010CC] disabled:opacity-50">
-            Guardar
+            {saving ? 'Guardando...' : 'Guardar'}
           </button>
         </div>
       </div>
@@ -83,45 +85,62 @@ function Modal({ title, onClose, onSave, form, setForm }) {
 }
 
 export default function AdminUsuarios() {
+  const { admin } = useAuth()
   const [usuarios, setUsuarios] = useState([])
+  const [cargando, setCargando] = useState(true)
   const [modal, setModal] = useState(null)
   const [form,  setForm]  = useState(empty)
+  const [saving, setSaving] = useState(false)
 
   function cargar() {
-    setUsuarios(JSON.parse(localStorage.getItem('bigone_admin_usuarios') || '[]'))
+    setCargando(true)
+    api.get('/admin/usuarios')
+      .then(setUsuarios)
+      .catch(e => alert('No se pudo cargar la lista de usuarios: ' + e.message))
+      .finally(() => setCargando(false))
   }
 
   useEffect(() => { cargar() }, [])
 
   function openNuevo() { setForm({ ...empty }); setModal('nuevo') }
-  function openEdit(u) { setForm({ ...u }); setModal(u.id) }
+  function openEdit(u) { setForm({ ...u, password: '' }); setModal(u.id) }
 
-  function guardar() {
-    const lista = JSON.parse(localStorage.getItem('bigone_admin_usuarios') || '[]')
-    let updated
-    if (modal === 'nuevo') {
-      updated = [...lista, { ...form, id: Date.now() }]
-    } else {
-      updated = lista.map(u => u.id === modal ? { ...form, id: modal } : u)
+  async function guardar() {
+    setSaving(true)
+    try {
+      if (modal === 'nuevo') {
+        await api.post('/admin/usuarios', form)
+      } else {
+        const payload = { ...form }
+        if (!payload.password) delete payload.password
+        await api.patch(`/admin/usuarios/${modal}`, payload)
+      }
+      setModal(null)
+      cargar()
+    } catch (e) {
+      alert('No se pudo guardar: ' + e.message)
+    } finally {
+      setSaving(false)
     }
-    localStorage.setItem('bigone_admin_usuarios', JSON.stringify(updated))
-    setModal(null)
-    cargar()
   }
 
-  function toggleActivo(id) {
-    const lista = JSON.parse(localStorage.getItem('bigone_admin_usuarios') || '[]')
-    localStorage.setItem('bigone_admin_usuarios', JSON.stringify(
-      lista.map(u => u.id === id ? { ...u, activo: !u.activo } : u)
-    ))
-    cargar()
+  async function toggleActivo(u) {
+    try {
+      await api.patch(`/admin/usuarios/${u.id}`, { activo: !u.activo })
+      cargar()
+    } catch (e) {
+      alert('No se pudo actualizar: ' + e.message)
+    }
   }
 
-  function eliminar(id) {
+  async function eliminar(id) {
     if (!confirm('¿Eliminar este usuario?')) return
-    const lista = JSON.parse(localStorage.getItem('bigone_admin_usuarios') || '[]')
-    localStorage.setItem('bigone_admin_usuarios', JSON.stringify(lista.filter(u => u.id !== id)))
-    cargar()
+    try {
+      await api.delete(`/admin/usuarios/${id}`)
+      cargar()
+    } catch (e) {
+      alert('No se pudo eliminar: ' + e.message)
+    }
   }
 
   return (
@@ -132,20 +151,6 @@ export default function AdminUsuarios() {
           className="flex items-center gap-2 bg-[#0015FF] text-white font-bold uppercase tracking-widest text-xs px-4 py-2.5 hover:bg-[#0010CC]">
           <Plus size={14} /> Nuevo usuario
         </button>
-      </div>
-
-      {/* usuario principal fijo */}
-      <div className="mb-4 border border-[#E8E8E8] bg-[#FAFAFA] px-5 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-[#0015FF] flex items-center justify-center text-white text-xs font-black">A</div>
-          <div>
-            <p className="text-sm font-semibold text-[#111]">Admin Big One</p>
-            <p className="text-[11px] text-[#6B6B6B]">admin@bigone.com</p>
-          </div>
-        </div>
-        <span className="text-[9px] font-bold uppercase tracking-widest text-[#0015FF] border border-[#0015FF]/20 px-2.5 py-1 rounded-full">
-          Super admin
-        </span>
       </div>
 
       <div className="border border-[#E8E8E8] overflow-x-auto">
@@ -163,9 +168,12 @@ export default function AdminUsuarios() {
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2.5">
                     <div className="w-7 h-7 rounded-full bg-[#F0F0F0] flex items-center justify-center text-[#6B6B6B] text-xs font-black shrink-0">
-                      {u.nombre?.[0]?.toUpperCase() || '?'}
+                      {u.name?.[0]?.toUpperCase() || '?'}
                     </div>
-                    <span className="font-semibold text-[#111]">{u.nombre}</span>
+                    <span className="font-semibold text-[#111]">{u.name}</span>
+                    {u.email === admin?.email && (
+                      <span className="text-[9px] font-bold uppercase tracking-widest text-[#0015FF]">(tú)</span>
+                    )}
                   </div>
                 </td>
                 <td className="px-4 py-3 text-[#6B6B6B]">{u.email}</td>
@@ -176,7 +184,7 @@ export default function AdminUsuarios() {
                   </span>
                 </td>
                 <td className="px-4 py-3">
-                  {u.activo !== false
+                  {u.activo
                     ? <span className="flex items-center gap-1 text-[10px] font-bold text-[#16a34a]"><UserCheck size={12}/> Activo</span>
                     : <span className="flex items-center gap-1 text-[10px] font-bold text-[#FF0033]"><UserX size={12}/> Inactivo</span>
                   }
@@ -187,10 +195,10 @@ export default function AdminUsuarios() {
                       className="text-[#6B6B6B] hover:text-[#111] transition-colors" title="Editar">
                       <Pencil size={14}/>
                     </button>
-                    <button onClick={() => toggleActivo(u.id)}
+                    <button onClick={() => toggleActivo(u)}
                       className="text-[#6B6B6B] hover:text-[#0015FF] transition-colors"
-                      title={u.activo !== false ? 'Desactivar' : 'Activar'}>
-                      {u.activo !== false ? <UserX size={14}/> : <UserCheck size={14}/>}
+                      title={u.activo ? 'Desactivar' : 'Activar'}>
+                      {u.activo ? <UserX size={14}/> : <UserCheck size={14}/>}
                     </button>
                     <button onClick={() => eliminar(u.id)}
                       className="text-[#6B6B6B] hover:text-[#FF0033] transition-colors" title="Eliminar">
@@ -202,10 +210,9 @@ export default function AdminUsuarios() {
             ))}
           </tbody>
         </table>
-        {usuarios.length === 0 && (
+        {!cargando && usuarios.length === 0 && (
           <div className="px-5 py-10 text-center">
-            <p className="text-[#6B6B6B] text-sm">Sin usuarios adicionales.</p>
-            <p className="text-[11px] text-[#BBBBBB] mt-1">Los usuarios creados aquí pueden iniciar sesión en el panel.</p>
+            <p className="text-[#6B6B6B] text-sm">Sin usuarios.</p>
           </div>
         )}
       </div>
@@ -215,6 +222,8 @@ export default function AdminUsuarios() {
           title={modal === 'nuevo' ? 'Nuevo usuario' : 'Editar usuario'}
           onClose={() => setModal(null)}
           onSave={guardar}
+          saving={saving}
+          esEdicion={modal !== 'nuevo'}
           form={form}
           setForm={setForm}
         />

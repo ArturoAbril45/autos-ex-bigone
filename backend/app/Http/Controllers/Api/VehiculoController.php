@@ -9,15 +9,11 @@ use Illuminate\Http\Request;
 
 class VehiculoController extends Controller
 {
-    public function index()
+    private function reglas(): array
     {
-        return response()->json(Vehiculo::all());
-    }
-
-    public function store(Request $request)
-    {
-        $data = $request->validate([
+        return [
             'modelo'         => 'required|string',
+            'marca'          => 'nullable|string',
             'año'            => 'required|integer',
             'categoria'      => 'required|string',
             'transmision'    => 'required|string',
@@ -29,7 +25,18 @@ class VehiculoController extends Controller
             'colores'        => 'nullable|array',
             'features'       => 'nullable|array',
             'disponible'     => 'boolean',
-        ]);
+            'imagen'         => 'nullable|string',
+        ];
+    }
+
+    public function index()
+    {
+        return response()->json(Vehiculo::all());
+    }
+
+    public function store(Request $request)
+    {
+        $data = $request->validate($this->reglas());
         return response()->json(Vehiculo::create($data), 201);
     }
 
@@ -41,8 +48,25 @@ class VehiculoController extends Controller
     public function update(Request $request, string $id)
     {
         $v = Vehiculo::findOrFail($id);
-        $v->update($request->all());
+        $data = $request->validate($this->reglas());
+        $v->update($data);
         return response()->json($v);
+    }
+
+    // POST /api/admin/vehiculos/upload-imagen — recibe un archivo real y lo guarda en storage/app/public/vehiculos
+    public function uploadImagen(Request $request)
+    {
+        $request->validate([
+            'imagen' => 'required|image|max:4096', // 4MB
+        ]);
+
+        $path = $request->file('imagen')->store('vehiculos', 'public');
+
+        // Construimos la URL desde la petición real (host:puerto) en vez de
+        // depender de APP_URL, que en local no siempre incluye el puerto.
+        $url = $request->getSchemeAndHttpHost() . '/storage/' . $path;
+
+        return response()->json(['url' => $url], 201);
     }
 
     public function destroy(string $id)

@@ -1,6 +1,8 @@
-import { useState, useRef, useEffect } from 'react'
+﻿import { useState, useRef, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Car, Gauge, Wifi, Camera, MapPin, ArrowRight, X, Globe, Flag,
          Upload, Check, ChevronLeft, CreditCard, QrCode, AlertTriangle } from 'lucide-react'
+import { useSettings } from '../hooks/useSettings'
 
 /* ─── helpers ─────────────────────────────────────────────── */
 const featureIcon = (f) => {
@@ -212,6 +214,7 @@ function ModalAviso({ onAceptar, onBack, onClose }) {
 }
 
 const ANTICIPO = 500
+const LIBELULA_APPKEY = '26916565-3b0e-359c-cf11-cfc014a6d31e'
 
 /* ─── modal: pago ──────────────────────────────────────────── */
 const API_URL = import.meta.env.VITE_API_URL || 'https://bigonerentacar.online/api'
@@ -225,6 +228,7 @@ function logCliente(payload) {
 }
 
 function ModalPago({ modelo, v, datos, tipo, onBack, onClose }) {
+  const navigate = useNavigate()
   const [enviando, setEnviando] = useState(false)
   const [error,    setError]    = useState('')
   const [segundos, setSegundos] = useState(15 * 60)
@@ -244,20 +248,10 @@ function ModalPago({ modelo, v, datos, tipo, onBack, onClose }) {
   const total     = dias * (v?.preciodiario || 0)
   const pendiente = Math.max(0, total - ANTICIPO)
 
-  function prepararLocalStorage(identificador) {
-    const clientes = JSON.parse(localStorage.getItem('bigone_clientes_locales') || '[]')
-    const sinActual = clientes.filter(c => c.ci !== datos?.dni)
-    sinActual.push({
-      id: Date.now(),
-      ci: datos?.dni,
-      nombre: datos?.nombres,
-      vehiculo: `${modelo} ${v?.año || ''}`.trim(),
-      telefono: datos?.celular,
-      monto_pagado: String(ANTICIPO),
-      monto_pendiente: String(pendiente),
-    })
-    localStorage.setItem('bigone_clientes_locales', JSON.stringify(sinActual))
-
+  // Solo necesario para el flujo Libelula (extranjeros): el pago ocurre en un
+  // dominio externo, así que esto es lo único que sobrevive la redirección de
+  // ida y vuelta. El flujo nacional (QR) no sale del sitio y no lo necesita.
+  function guardarPendienteParaLibelula(identificador, montoPagado = ANTICIPO) {
     localStorage.setItem('bigone_reserva_pendiente', JSON.stringify({
       identificador,
       vehiculo: modelo,
@@ -270,7 +264,8 @@ function ModalPago({ modelo, v, datos, tipo, onBack, onClose }) {
       fechaIngreso: datos?.fechaIngreso,
       fechaEntrega: datos?.fechaEntrega,
       dias,
-      monto: ANTICIPO,
+      monto: montoPagado,
+      precio_total: total,
       fecha: new Date().toISOString(),
       origen: 'reserva',
       tipo_cliente: tipo || 'nacional',
@@ -303,8 +298,6 @@ function ModalPago({ modelo, v, datos, tipo, onBack, onClose }) {
     setError('')
     const identificador = String(Date.now())
     try {
-      prepararLocalStorage(identificador)
-
       const docUrls = await subirDocs(datos?._docs)
 
       logCliente({
@@ -325,7 +318,7 @@ function ModalPago({ modelo, v, datos, tipo, onBack, onClose }) {
         lng:           datos?.ubicacion?.lng || null,
       })
 
-      // Registrar directamente en el backend
+      // Registrar el intento en el backend
       await fetch(`${API_URL}/bigone/intentos`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -353,7 +346,9 @@ function ModalPago({ modelo, v, datos, tipo, onBack, onClose }) {
         headers: { 'Content-Type': 'application/json' },
       }).catch(() => {})
 
-      await fetch(`${API_URL}/bigone/reservas`, {
+      // Única escritura autoritativa de la reserva — esperamos la respuesta
+      // real del backend para no mostrar "éxito" si falló el guardado.
+      const res = await fetch(`${API_URL}/bigone/reservas`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -379,10 +374,11 @@ function ModalPago({ modelo, v, datos, tipo, onBack, onClose }) {
           ref_pago:         identificador,
           documentos:       docUrls,
         }),
-      }).catch(() => {})
+      })
+      const reservaCreada = await res.json()
+      if (!res.ok) throw new Error(reservaCreada.message || 'El servidor rechazó la reserva.')
 
-      try { localStorage.removeItem(`bigone_borrador_${v?.id}`) } catch {}
-      window.location.href = '/reserva-exitosa'
+      navigate('/reserva-exitosa', { state: { reserva: reservaCreada } })
     } catch (e) {
       setError(e.message || 'Error al registrar la reserva.')
       setEnviando(false)
@@ -390,24 +386,20 @@ function ModalPago({ modelo, v, datos, tipo, onBack, onClose }) {
   }
 
   // ── EXTRANJEROS: pasarela Libelula ───────────────────────────
-  async function pagarLibelula() {
+  // tipoPago: 'anticipo' (solo 500 Bs) | 'completo' (todo el servicio)
+  async function pagarLibelula(tipoPago = 'anticipo') {
     setEnviando(true)
     setError('')
     const identificador = String(Date.now())
+    const esCompleto = tipoPago === 'completo'
+    const monto = esCompleto ? total : ANTICIPO
+    const concepto = esCompleto
+      ? `Pago completo reserva ${modelo} - Big One Rent a Car`
+      : `Anticipo reserva ${modelo} - Big One Rent a Car`
     try {
-      prepararLocalStorage(identificador)
+      guardarPendienteParaLibelula(identificador, monto)
 
       const docUrls = await subirDocs(datos?._docs)
-
-      const intentos = JSON.parse(localStorage.getItem('bigone_intentos') || '[]')
-      intentos.push({
-        id: identificador, vehiculo: modelo, año: v?.año,
-        nombre: datos?.nombres, ci: datos?.dni, telefono: datos?.celular,
-        fechaIngreso: datos?.fechaIngreso, fechaEntrega: datos?.fechaEntrega,
-        dias, monto: ANTICIPO, fecha: new Date().toISOString(),
-        completada: false, origen: 'reserva', ubicacion: datos?.ubicacion || null,
-      })
-      localStorage.setItem('bigone_intentos', JSON.stringify(intentos))
 
       logCliente({
         nombre:        datos?.nombres,
@@ -416,11 +408,12 @@ function ModalPago({ modelo, v, datos, tipo, onBack, onClose }) {
         correo:        datos?.correo || null,
         vehiculo:      modelo,
         año:           v?.año,
-        monto:         ANTICIPO,
+        monto,
         dias,
         fecha_ingreso: datos?.fechaIngreso,
         fecha_entrega: datos?.fechaEntrega,
         tipo_cliente:  'extranjero',
+        tipo_pago:     tipoPago,
         estado:        'intento',
         origen:        'reserva',
         lat:           datos?.ubicacion?.lat || null,
@@ -433,8 +426,9 @@ function ModalPago({ modelo, v, datos, tipo, onBack, onClose }) {
         body: JSON.stringify({
           ref_id: identificador, nombre: datos?.nombres, ci: datos?.dni,
           telefono: datos?.celular, vehiculo: modelo, año: v?.año,
-          monto: ANTICIPO, dias, fecha_ingreso: datos?.fechaIngreso,
+          monto, dias, fecha_ingreso: datos?.fechaIngreso,
           fecha_entrega: datos?.fechaEntrega, tipo_cliente: 'extranjero',
+          tipo_pago: tipoPago,
           origen: 'reserva', lat: datos?.ubicacion?.lat || null, lng: datos?.ubicacion?.lng || null,
         }),
       }).catch(() => {})
@@ -447,13 +441,13 @@ function ModalPago({ modelo, v, datos, tipo, onBack, onClose }) {
         identificador,
         callback_url: 'https://bigonerentacar.online/reserva-exitosa',
         url_retorno:  'https://bigonerentacar.online/reserva-exitosa',
-        descripcion:  `Anticipo reserva ${modelo} - Big One Rent a Car`,
+        descripcion:  concepto,
         nombre_cliente: datos?.nombres?.trim() || 'Cliente',
         emite_factura: 0,
         lineas_detalle_deuda: [{
           nro_linea: 1,
-          concepto: `Anticipo reserva ${modelo} - Big One Rent a Car`,
-          cantidad: 1, costo_unitario: ANTICIPO, descuento: 0,
+          concepto,
+          cantidad: 1, costo_unitario: monto, descuento: 0,
         }],
       }
       const res  = await fetch('https://api.todotix.com/rest/deuda/registrar', {
@@ -466,7 +460,6 @@ function ModalPago({ modelo, v, datos, tipo, onBack, onClose }) {
       try { data = JSON.parse(text) } catch { throw new Error('Respuesta inválida: ' + text.slice(0, 300)) }
       const url = data.url_pasarela_pagos || data.url || data.url_pago || data.redirect_url || data.link
       if (url) {
-        try { localStorage.removeItem(`bigone_borrador_${v?.id}`) } catch {}
         window.location.href = url
       } else {
         throw new Error('API respondió: ' + JSON.stringify(data).slice(0, 300))
@@ -493,10 +486,8 @@ function ModalPago({ modelo, v, datos, tipo, onBack, onClose }) {
           <span className="section-label">Pago · {modelo}</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className={`text-[11px] font-black tabular-nums px-2 py-0.5 rounded-full border ${
-            timerUrgente
-              ? 'bg-red-50 border-[#FF0033]/30 text-[#FF0033] animate-pulse'
-              : 'bg-[#F7F7F7] border-[#E8E8E8] text-[#6B6B6B]'
+          <span className={`text-[11px] font-black tabular-nums px-1 ${
+            timerUrgente ? 'text-[#FF0033] animate-pulse' : 'text-[#6B6B6B]'
           }`}>⏱ {timerMins}:{timerSecs}</span>
           <button onClick={onClose}
             className="w-8 h-8 flex items-center justify-center rounded-full bg-[#F7F7F7] text-[#6B6B6B] hover:bg-[#E8E8E8] transition-colors">
@@ -569,14 +560,20 @@ function ModalPago({ modelo, v, datos, tipo, onBack, onClose }) {
           /* ── Pasarela Libelula para extranjeros ── */
           <>
             <p className="text-[10px] text-[#6B6B6B] leading-relaxed">
-              El saldo pendiente podrás pagarlo desde la sección <strong className="text-[#111]">Pago de servicios</strong> con tu CI o pasaporte.
+              Elige si quieres reservar con el anticipo o pagar todo el servicio ahora. El saldo pendiente, si queda, podrás pagarlo luego desde <strong className="text-[#111]">Pago de servicios</strong> con tu CI o pasaporte.
             </p>
             {error && <p className="text-[11px] text-[#FF0033]">{error}</p>}
-            <button onClick={pagarLibelula} disabled={enviando}
-              className="btn-blue w-full justify-center !py-3 disabled:opacity-40 disabled:cursor-not-allowed">
+            <button onClick={() => pagarLibelula('anticipo')} disabled={enviando}
+              className="btn-blue !rounded-none w-full justify-center !py-3 disabled:opacity-40 disabled:cursor-not-allowed">
               {enviando
                 ? <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin inline-block mr-2" />Redirigiendo…</>
-                : <>Pagar con Libelula <ArrowRight size={14} /></>}
+                : <>Reservar · Anticipo {ANTICIPO.toLocaleString('es-BO')} Bs <ArrowRight size={14} /></>}
+            </button>
+            <button onClick={() => pagarLibelula('completo')} disabled={enviando}
+              className="btn-primary !rounded-none w-full justify-center !py-3 disabled:opacity-40 disabled:cursor-not-allowed">
+              {enviando
+                ? <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin inline-block mr-2" />Redirigiendo…</>
+                : <>Pagar todo el servicio · {total.toLocaleString('es-BO')} Bs <ArrowRight size={14} /></>}
             </button>
           </>
         )}
@@ -870,106 +867,6 @@ function ModalDocumentos({ tipo, vehiculo, vehiculoId, onBack, onContinuar, onCl
   )
 }
 
-/* ─── modal: contacto rápido (captura temprana) ─────────────── */
-function ModalContacto({ vehiculoId, vehiculoNombre, onContinuar, onClose }) {
-  const [nombre,  setNombre]  = useState('')
-  const [celular, setCelular] = useState('')
-  const [borrador, setBorrador] = useState(null)
-  const [restaurando, setRestaurando] = useState(false)
-
-  useEffect(() => {
-    const b = localStorage.getItem(`bigone_borrador_${vehiculoId}`)
-    if (b) {
-      try { setBorrador(JSON.parse(b)) } catch {}
-    }
-  }, [vehiculoId])
-
-  const valido = nombre.trim().split(/\s+/).length >= 2 && celular.trim().length >= 7
-
-  function continuar() {
-    const contacto = { nombre: nombre.trim(), celular: celular.trim() }
-    fetch(`${API_URL}/log-cliente`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        nombre: contacto.nombre,
-        celular: contacto.celular,
-        vehiculo: vehiculoNombre,
-        estado: 'contacto',
-        etapa: 'contacto',
-        origen: 'reserva',
-      }),
-    }).catch(() => {})
-    onContinuar(contacto)
-  }
-
-  if (restaurando && borrador) {
-    return (
-      <div className="bg-white rounded-lg w-full max-w-sm p-7 shadow-2xl relative" onClick={e => e.stopPropagation()}>
-        <button onClick={onClose} className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full bg-[#F7F7F7] text-[#6B6B6B] hover:bg-[#E8E8E8]"><X size={14}/></button>
-        <p className="section-label mb-1 text-[#16a34a]">Reserva guardada</p>
-        <h2 className="font-display text-2xl uppercase text-[#111] tracking-tight mb-3">Continuar donde lo dejaste</h2>
-        <div className="bg-[#F7F9FF] border border-[#0015FF]/10 rounded-lg p-4 mb-5 text-sm space-y-1.5">
-          <p><span className="text-[#6B6B6B] text-[10px] uppercase tracking-widest">Nombre</span><br/><strong>{borrador.nombres}</strong></p>
-          <p><span className="text-[#6B6B6B] text-[10px] uppercase tracking-widest">Ingreso</span><br/><strong>{borrador.fechaIngreso || '—'}</strong></p>
-          <p><span className="text-[#6B6B6B] text-[10px] uppercase tracking-widest">Entrega</span><br/><strong>{borrador.fechaEntrega || '—'}</strong></p>
-        </div>
-        <div className="flex flex-col gap-2">
-          <button onClick={() => onContinuar({ nombre: borrador.nombres, celular: borrador.celular }, borrador)}
-            className="btn-blue !py-2.5 justify-center">
-            Continuar reserva <ArrowRight size={14}/>
-          </button>
-          <button onClick={() => { localStorage.removeItem(`bigone_borrador_${vehiculoId}`); setRestaurando(false) }}
-            className="text-[11px] text-[#6B6B6B] hover:text-[#FF0033] text-center py-1">
-            Empezar de nuevo
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="bg-white rounded-lg w-full max-w-sm p-7 shadow-2xl relative" onClick={e => e.stopPropagation()}>
-      <button onClick={onClose} className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full bg-[#F7F7F7] text-[#6B6B6B] hover:bg-[#E8E8E8]"><X size={14}/></button>
-
-      {borrador && !restaurando && (
-        <button onClick={() => setRestaurando(true)}
-          className="w-full mb-4 flex items-center justify-between bg-[#F0F4FF] border border-[#0015FF]/20 rounded-lg px-4 py-2.5 text-left hover:bg-[#E8EEFF] transition-colors">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-[#0015FF]">Reserva guardada</p>
-            <p className="text-xs text-[#6B6B6B] mt-0.5">Tienes una reserva incompleta para este vehículo</p>
-          </div>
-          <ArrowRight size={13} className="text-[#0015FF] shrink-0 ml-2"/>
-        </button>
-      )}
-
-      <p className="section-label mb-1">Paso 1 de 3</p>
-      <h2 className="font-display text-3xl uppercase text-[#111] tracking-tight mb-1">Tus datos</h2>
-      <p className="text-sm text-[#6B6B6B] mb-5">Para reservar necesitamos tu contacto.</p>
-
-      <div className="flex flex-col gap-3 mb-6">
-        <div>
-          <label className="section-label block mb-1.5">Nombre y apellido <span className="text-[#FF0033]">*</span></label>
-          <input value={nombre} onChange={e => setNombre(e.target.value)}
-            placeholder="Ej. Juan Pérez"
-            className="w-full border border-[#E8E8E8] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-[#0015FF]"/>
-        </div>
-        <div>
-          <label className="section-label block mb-1.5">Celular <span className="text-[#FF0033]">*</span></label>
-          <input value={celular} onChange={e => setCelular(e.target.value.replace(/[^\d+\s-]/g,''))}
-            placeholder="+591 70000000" inputMode="tel"
-            className="w-full border border-[#E8E8E8] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-[#0015FF]"/>
-        </div>
-      </div>
-
-      <button onClick={continuar} disabled={!valido}
-        className="btn-blue w-full !py-3 justify-center disabled:opacity-40 disabled:cursor-not-allowed">
-        Continuar <ArrowRight size={14}/>
-      </button>
-    </div>
-  )
-}
-
 /* ─── modal: nacionalidad ──────────────────────────────────── */
 function ModalNacionalidad({ onSelect, onClose }) {
   return (
@@ -1013,143 +910,6 @@ function ModalNacionalidad({ onSelect, onClose }) {
           </div>
           <ArrowRight size={15} className="text-[#6B6B6B] ml-auto group-hover:text-[#FBBF24] transition-colors" />
         </button>
-      </div>
-    </div>
-  )
-}
-
-/* ─── modal reservar ───────────────────────────────────────── */
-const LIBELULA_APPKEY = '26916565-3b0e-359c-cf11-cfc014a6d31e'
-
-function ModalReservar({ v, onClose }) {
-  const [datos, setDatos] = useState({ nombre: '', ci: '', telefono: '', fechaIngreso: '', fechaEntrega: '' })
-  const [enviando, setEnviando] = useState(false)
-  const [error, setError] = useState('')
-  const hoy = new Date().toISOString().split('T')[0]
-
-  function set(k, val) { setDatos(d => ({ ...d, [k]: val })) }
-
-  const dias = datos.fechaIngreso && datos.fechaEntrega
-    ? Math.max(1, Math.ceil((new Date(datos.fechaEntrega) - new Date(datos.fechaIngreso)) / 86400000))
-    : 0
-  const monto = dias * v.preciodiario
-
-  const ok = datos.nombre.trim() && datos.ci.trim() && datos.telefono.trim() && datos.fechaIngreso && datos.fechaEntrega
-
-  async function pagar() {
-    if (!ok) return
-    setEnviando(true)
-    setError('')
-    const returnUrl = `${window.location.origin}/reserva-exitosa`
-    try {
-      const reservaPendiente = {
-        vehiculo: v.modelo,
-        marca: v.marca,
-        año: v.año,
-        nombre: datos.nombre,
-        ci: datos.ci,
-        telefono: datos.telefono,
-        fechaIngreso: datos.fechaIngreso,
-        fechaEntrega: datos.fechaEntrega,
-        dias,
-        monto,
-        fecha: new Date().toISOString(),
-      }
-      localStorage.setItem('bigone_reserva_pendiente', JSON.stringify(reservaPendiente))
-
-      const res = await fetch('https://api.todotix.com/rest/deuda/registrar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          appkey: LIBELULA_APPKEY,
-          moneda: 'BOB',
-          monto,
-          descripcion: `Reserva ${v.modelo} ${v.año} - Big One Rent a Car`,
-          url_retorno: returnUrl,
-          nombre: datos.nombre,
-        }),
-      })
-      const data = await res.json()
-      const url = data.url || data.url_pago || data.redirect_url || data.link
-      if (url) {
-        window.location.href = url
-      } else {
-        throw new Error('No se recibió URL de pago')
-      }
-    } catch (e) {
-      setError('Error al conectar con el sistema de pago. Intenta de nuevo.')
-      setEnviando(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(4px)' }}>
-      <div className="bg-white rounded-lg w-full max-w-md shadow-2xl relative"
-        onClick={e => e.stopPropagation()}>
-
-        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#F0F0F0]">
-          <div>
-            <p className="section-label text-[#0015FF]">Reservar</p>
-            <h2 className="font-display text-2xl uppercase text-[#111] tracking-tight leading-none">{v.modelo}</h2>
-          </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full bg-[#F7F7F7] text-[#6B6B6B] hover:bg-[#E8E8E8]">
-            <X size={14} />
-          </button>
-        </div>
-
-        <div className="p-6 flex flex-col gap-3.5">
-          <div>
-            <label className="section-label block mb-1.5">Nombre completo <span className="text-[#FF0033]">*</span></label>
-            <input value={datos.nombre} onChange={e => set('nombre', e.target.value)}
-              placeholder="Ej. Juan Pérez" className={inputCls} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="section-label block mb-1.5">CI <span className="text-[#FF0033]">*</span></label>
-              <input value={datos.ci} onChange={e => set('ci', e.target.value)}
-                placeholder="Número de CI" className={inputCls} />
-            </div>
-            <div>
-              <label className="section-label block mb-1.5">Teléfono <span className="text-[#FF0033]">*</span></label>
-              <input value={datos.telefono} onChange={e => set('telefono', e.target.value)}
-                placeholder="+591 7XXXXXXX" className={inputCls} />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="section-label block mb-1.5">Fecha de ingreso <span className="text-[#FF0033]">*</span></label>
-              <input type="date" value={datos.fechaIngreso} min={hoy}
-                onChange={e => { set('fechaIngreso', e.target.value); if (datos.fechaEntrega && e.target.value >= datos.fechaEntrega) set('fechaEntrega', '') }}
-                className={inputCls} />
-            </div>
-            <div>
-              <label className="section-label block mb-1.5">Fecha de entrega <span className="text-[#FF0033]">*</span></label>
-              <input type="date" value={datos.fechaEntrega} min={datos.fechaIngreso || hoy}
-                onChange={e => set('fechaEntrega', e.target.value)}
-                className={inputCls} />
-            </div>
-          </div>
-
-          {dias > 0 && (
-            <div className="bg-[#0015FF]/5 border border-[#0015FF]/20 rounded-lg px-4 py-3 flex items-center justify-between">
-              <div>
-                <p className="text-[10px] text-[#6B6B6B] uppercase tracking-widest">{dias} día{dias > 1 ? 's' : ''} · {v.preciodiario} Bs/día</p>
-                <p className="font-display text-2xl text-[#0015FF] leading-none mt-0.5">{monto.toLocaleString('es-BO')} Bs</p>
-              </div>
-              <ArrowRight size={18} className="text-[#0015FF]" />
-            </div>
-          )}
-
-          {error && <p className="text-[11px] text-[#FF0033]">{error}</p>}
-
-          <button onClick={pagar} disabled={!ok || enviando || dias === 0}
-            className="btn-blue w-full justify-center !py-3 disabled:opacity-40 disabled:cursor-not-allowed mt-1">
-            {enviando
-              ? <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Redirigiendo…</>
-              : <>Pagar con Libelula <ArrowRight size={14} /></>}
-          </button>
-        </div>
       </div>
     </div>
   )
@@ -1410,7 +1170,7 @@ export default function CarCard({ v }) {
   const ahorroSem = v.preciodiario - v.preciosemanal
   const ahorroMes = v.preciodiario - v.preciomensual
 
-  const reservasActivas = localStorage.getItem('bigone_reservas_activas') !== 'false'
+  const { reservas_activas: reservasActivas } = useSettings()
 
   const cerrar = () => {
     setModal(null)
@@ -1494,13 +1254,13 @@ export default function CarCard({ v }) {
           </div>
 
           <div className="mt-auto flex gap-2">
-            <button onClick={intentarReservar}
-              className="flex-1 btn-blue !py-2.5 !px-3 !text-[10px] !rounded-lg justify-center min-w-0 inline-flex items-center gap-1.5">
-              Reservar <ArrowRight size={12} />
+            <button disabled aria-disabled="true" title="Próximamente"
+              className="flex-1 !py-2 !px-3 !text-[10px] !rounded-lg justify-center min-w-0 inline-flex flex-col items-center leading-tight bg-[#ECECEC] text-[#9A9A9A] font-bold uppercase tracking-wide cursor-not-allowed">
+              Reservar <span className="text-[8px] font-semibold tracking-[0.15em]">Próximamente</span>
             </button>
-            <button onClick={() => setModal('garantia')}
-              className="flex-1 btn-ghost !py-2.5 !px-3 !text-[10px] !rounded-lg justify-center min-w-0">
-              Garantía
+            <button disabled aria-disabled="true" title="Próximamente"
+              className="flex-1 !py-2 !px-3 !text-[10px] !rounded-lg justify-center min-w-0 inline-flex flex-col items-center leading-tight bg-[#F4F4F4] text-[#9A9A9A] font-bold uppercase tracking-wide border border-[#E3E3E3] cursor-not-allowed">
+              Garantía <span className="text-[8px] font-semibold tracking-[0.15em]">Próximamente</span>
             </button>
           </div>
         </div>
@@ -1549,7 +1309,6 @@ export default function CarCard({ v }) {
               onBack={() => setPaso('nacionalidad')}
               onContinuar={d => {
                 setDatosDocs(d)
-                try { localStorage.setItem(`bigone_borrador_${v.id}`, JSON.stringify({ nombres: d.nombres, celular: d.celular, fechaIngreso: d.fechaIngreso, fechaEntrega: d.fechaEntrega })) } catch {}
                 setPaso('aviso')
               }}
               onClose={cerrar} />

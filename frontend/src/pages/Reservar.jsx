@@ -88,7 +88,7 @@ export default function Reservar() {
   }
 
   return (
-    <main className="pt-[64px] bg-[#FFE600] min-h-screen">
+    <main className=" bg-[#FFE600] min-h-screen">
       <div className="max-w-2xl mx-auto px-4 sm:px-6 py-14">
 
         <p className="section-label mb-3">Big One Rent a Car</p>

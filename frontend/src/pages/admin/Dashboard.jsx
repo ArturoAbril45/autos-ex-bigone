@@ -8,6 +8,8 @@ const ESTADOS = {
   activa:      { label: 'Activa',      color: 'text-green-500'  },
   completada:  { label: 'Completada',  color: 'text-[#6B6B6B]'  },
   cancelada:   { label: 'Cancelada',   color: 'text-[#FF0033]'  },
+  pagada:      { label: 'Pagada',      color: 'text-[#16a34a]'  },
+  anulada:     { label: 'Anulada',     color: 'text-[#FF0033]'  },
 }
 
 function BarChart({ data, keyVal, keyLabel, color = 'bg-[#0015FF]', height = 'h-24' }) {
@@ -180,11 +182,11 @@ export default function Dashboard() {
               <tbody>
                 {recientes.map(r => (
                   <tr key={r.id} className="border-b border-[#E8E8E8]/80 hover:bg-[#FFE600]/10 transition-colors">
-                    <td className="px-4 py-3 text-[#111] whitespace-nowrap">{r.cliente?.nombre} {r.cliente?.apellido}</td>
-                    <td className="px-4 py-3 text-[#6B6B6B]">{r.vehiculo?.modelo}</td>
-                    <td className="px-4 py-3 text-[#6B6B6B]">{r.fecha_inicio}</td>
-                    <td className="px-4 py-3 text-[#6B6B6B]">{r.fecha_fin}</td>
-                    <td className="px-4 py-3 text-[#0015FF] font-bold">{r.precio_total?.toLocaleString('es-BO')} Bs</td>
+                    <td className="px-4 py-3 text-[#111] whitespace-nowrap">{r.cliente ? `${r.cliente?.nombre ?? ''} ${r.cliente?.apellido ?? ''}` : r.nombre}</td>
+                    <td className="px-4 py-3 text-[#6B6B6B]">{r.vehiculo?.modelo ?? [r.vehiculo, r.año].filter(Boolean).join(' ')}</td>
+                    <td className="px-4 py-3 text-[#6B6B6B]">{r.fecha_inicio ?? r.fecha_ingreso}</td>
+                    <td className="px-4 py-3 text-[#6B6B6B]">{r.fecha_fin ?? r.fecha_entrega}</td>
+                    <td className="px-4 py-3 text-[#0015FF] font-bold">{(r.precio_total ?? r.monto)?.toLocaleString('es-BO')} Bs</td>
                     <td className="px-4 py-3">
                       <span className={`text-xs font-bold ${ESTADOS[r.estado]?.color ?? 'text-[#6B6B6B]'}`}>
                         {ESTADOS[r.estado]?.label ?? r.estado}

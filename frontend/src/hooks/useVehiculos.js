@@ -1,26 +1,27 @@
 import { useState, useEffect } from 'react'
-import { vehiculos as base } from '../data/vehiculos'
+import { api } from '../lib/api'
 
-function leer() {
-  try {
-    const admin      = JSON.parse(localStorage.getItem('bigone_vehiculos_admin')     || '[]')
-    const overrides  = JSON.parse(localStorage.getItem('bigone_vehiculos_overrides') || '{}')
-    const deletedIds = new Set(JSON.parse(localStorage.getItem('bigone_vehiculos_deleted') || '[]'))
-
-    const predefinidos = base
-      .filter(v => !deletedIds.has(v.id))
-      .map(v => overrides[v.id] ? { ...v, ...overrides[v.id] } : v)
-
-    return [...predefinidos, ...admin]
-  } catch {
-    return [...base]
+function normalizar(v) {
+  return {
+    ...v,
+    preciodiario: v.precio_diario,
+    preciosemanal: v.precio_semanal,
+    preciomensual: v.precio_mensual,
   }
 }
 
 export function useVehiculos() {
-  const [lista, setLista] = useState(leer)
+  const [lista, setLista] = useState([])
+  const [loading, setLoading] = useState(true)
 
-  useEffect(() => { setLista(leer()) }, [])
+  useEffect(() => {
+    let activo = true
+    api.get('/vehiculos')
+      .then(data => { if (activo) setLista(data.map(normalizar)) })
+      .catch(() => { if (activo) setLista([]) })
+      .finally(() => { if (activo) setLoading(false) })
+    return () => { activo = false }
+  }, [])
 
-  return lista
+  return loading ? [] : lista
 }

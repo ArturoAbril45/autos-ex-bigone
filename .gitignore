@@ -1,0 +1,44 @@
+# ---- Dependencias ----
+node_modules/
+**/node_modules/
+/backend/vendor/
+vendor/
+
+# ---- Entorno / secretos ----
+.env
+.env.*
+!.env.example
+*.key
+auth.json
+
+# ---- Base de datos (datos reales) ----
+*.sqlite
+*.sqlite-journal
+/backend/database/*.sqlite
+
+# ---- Laravel: storage (archivos subidos, logs, cache) y cache ----
+/backend/storage/app/*
+/backend/storage/framework/
+/backend/storage/logs/
+/backend/bootstrap/cache/*
+
+# ---- Builds ----
+/frontend/dist/
+dist/
+build/
+
+# ---- Logs y temporales ----
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# ---- Scripts locales de desarrollo / deploy (rutas, usuarios FTP, llaves) ----
+*_tmp.php
+/*.ps1
+/check_migrations_table.php
+/backend-serve.log
+/frontend-serve.log
+
+# ---- Config local del editor ----
+.claude/

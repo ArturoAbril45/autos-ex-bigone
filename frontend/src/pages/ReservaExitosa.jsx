@@ -1,92 +1,97 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { Home } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://bigonerentacar.online/api'
 
 export default function ReservaExitosa() {
+  const location = useLocation()
   const [reserva, setReserva] = useState(null)
 
   useEffect(() => {
-    const pendiente = JSON.parse(localStorage.getItem('bigone_reserva_pendiente') || 'null')
-    if (pendiente) {
-      // Guardar en admin como pagada
-      const reservas = JSON.parse(localStorage.getItem('bigone_reservas_admin') || '[]')
-      const nueva = { ...pendiente, id: Date.now(), estado: 'pagada' }
-      reservas.push(nueva)
-      localStorage.setItem('bigone_reservas_admin', JSON.stringify(reservas))
-
-      // Guardar en backend como reserva confirmada
-      fetch(`${API_URL}/bigone/reservas`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nombre:        pendiente.nombre,
-          ci:            pendiente.ci,
-          telefono:      pendiente.telefono,
-          correo:        pendiente.correo || null,
-          vehiculo:      pendiente.vehiculo,
-          marca:         pendiente.marca || null,
-          año:           pendiente.año,
-          monto:         pendiente.monto,
-          dias:          pendiente.dias,
-          fecha_ingreso: pendiente.fechaIngreso,
-          fecha_entrega: pendiente.fechaEntrega,
-          tipo_cliente:  pendiente.tipo_cliente || 'nacional',
-          estado:        'pagada',
-          origen:        pendiente.origen || 'reserva',
-          lat:           pendiente.ubicacion?.lat || null,
-          lng:           pendiente.ubicacion?.lng || null,
-          ref_pago:      pendiente.identificador || null,
-        }),
-      }).catch(() => {})
-
-      // Marcar intento como completado en backend
-      if (pendiente.identificador) {
-        fetch(`${API_URL}/bigone/intentos/${pendiente.identificador}/completar`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-        }).catch(() => {})
-      }
-
-      // Limpiar log y log backup
-      fetch(`${API_URL}/log-cliente`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nombre:        pendiente.nombre,
-          ci:            pendiente.ci,
-          celular:       pendiente.telefono,
-          correo:        pendiente.correo || null,
-          vehiculo:      pendiente.vehiculo,
-          año:           pendiente.año,
-          monto:         pendiente.monto,
-          dias:          pendiente.dias,
-          fecha_ingreso: pendiente.fechaIngreso,
-          fecha_entrega: pendiente.fechaEntrega,
-          tipo_cliente:  pendiente.tipo_cliente || 'nacional',
-          estado:        'pagada',
-          origen:        pendiente.origen || 'reserva',
-          lat:           pendiente.ubicacion?.lat || null,
-          lng:           pendiente.ubicacion?.lng || null,
-        }),
-      }).catch(() => {})
-
-      // Marcar el intento como completado
-      if (pendiente.identificador) {
-        const intentos = JSON.parse(localStorage.getItem('bigone_intentos') || '[]')
-        localStorage.setItem('bigone_intentos', JSON.stringify(
-          intentos.map(i => i.id === pendiente.identificador ? { ...i, completada: true } : i)
-        ))
-      }
-
-      localStorage.removeItem('bigone_reserva_pendiente')
-      setReserva(nueva)
+    // Caso 1 — flujo nacional (QR): la reserva ya quedó creada en el backend
+    // antes de navegar aquí; solo llega para mostrarla, sin volver a guardar nada.
+    const deRouterState = location.state?.reserva
+    if (deRouterState) {
+      setReserva({
+        vehiculo:      deRouterState.vehiculo,
+        año:           deRouterState.año,
+        nombre:        deRouterState.nombre,
+        ci:            deRouterState.ci,
+        fechaIngreso:  deRouterState.fecha_ingreso,
+        fechaEntrega:  deRouterState.fecha_entrega,
+        monto:         deRouterState.monto,
+      })
+      return
     }
-  }, [])
+
+    // Caso 2 — flujo extranjero (Libelula): el pago ocurrió en un dominio
+    // externo, así que la única forma de recuperar los datos al volver es
+    // esta referencia dejada antes de la redirección. Se guarda en el
+    // backend aquí mismo, una sola vez, y se limpia enseguida.
+    const pendiente = JSON.parse(localStorage.getItem('bigone_reserva_pendiente') || 'null')
+    if (!pendiente) return
+
+    localStorage.removeItem('bigone_reserva_pendiente')
+    setReserva({ ...pendiente, monto: pendiente.monto })
+
+    fetch(`${API_URL}/bigone/reservas`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nombre:        pendiente.nombre,
+        ci:            pendiente.ci,
+        telefono:      pendiente.telefono,
+        correo:        pendiente.correo || null,
+        vehiculo:      pendiente.vehiculo,
+        marca:         pendiente.marca || null,
+        año:           pendiente.año,
+        monto:         pendiente.monto,
+        precio_total:  pendiente.precio_total || null,
+        dias:          pendiente.dias,
+        fecha_ingreso: pendiente.fechaIngreso,
+        fecha_entrega: pendiente.fechaEntrega,
+        tipo_cliente:  pendiente.tipo_cliente || 'extranjero',
+        estado:        'pagada',
+        origen:        pendiente.origen || 'reserva',
+        lat:           pendiente.ubicacion?.lat || null,
+        lng:           pendiente.ubicacion?.lng || null,
+        ref_pago:      pendiente.identificador || null,
+      }),
+    }).catch(() => {})
+
+    if (pendiente.identificador) {
+      fetch(`${API_URL}/bigone/intentos/${pendiente.identificador}/completar`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+      }).catch(() => {})
+    }
+
+    fetch(`${API_URL}/log-cliente`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nombre:        pendiente.nombre,
+        ci:            pendiente.ci,
+        celular:       pendiente.telefono,
+        correo:        pendiente.correo || null,
+        vehiculo:      pendiente.vehiculo,
+        año:           pendiente.año,
+        monto:         pendiente.monto,
+        dias:          pendiente.dias,
+        fecha_ingreso: pendiente.fechaIngreso,
+        fecha_entrega: pendiente.fechaEntrega,
+        tipo_cliente:  pendiente.tipo_cliente || 'extranjero',
+        estado:        'pagada',
+        origen:        pendiente.origen || 'reserva',
+        lat:           pendiente.ubicacion?.lat || null,
+        lng:           pendiente.ubicacion?.lng || null,
+      }),
+    }).catch(() => {})
+  }, [location.state])
 
   return (
-    <main className="pt-[64px] min-h-screen flex items-center justify-center px-6">
+    <main className=" min-h-screen flex items-center justify-center px-6">
       <div className="bg-white rounded-2xl shadow-2xl p-10 max-w-md w-full text-center">
 
         <div className="w-24 h-24 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-6"
@@ -111,7 +116,7 @@ export default function ReservaExitosa() {
               <Row label="CI"           value={reserva.ci} />
               {reserva.fechaIngreso && <Row label="Ingreso"  value={reserva.fechaIngreso} />}
               {reserva.fechaEntrega && <Row label="Entrega"  value={reserva.fechaEntrega} />}
-              <Row label="Total pagado" value={`${reserva.monto?.toLocaleString('es-BO')} Bs`} highlight />
+              <Row label="Total pagado" value={`${Number(reserva.monto || 0).toLocaleString('es-BO')} Bs`} highlight />
             </div>
           </div>
         )}

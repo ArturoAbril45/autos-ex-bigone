@@ -1,9 +1,10 @@
 import { useEffect, useState, useRef } from 'react'
-import { Trash2, CheckCircle, XCircle, AlertCircle, Power, MapPin, Download, RotateCcw, Trash, Eye, X } from 'lucide-react'
+import { Trash2, CheckCircle, BadgeCheck, XCircle, AlertCircle, Power, MapPin, Download, RotateCcw, Trash, Eye, X } from 'lucide-react'
 import { api } from '../../lib/api'
 
 const TABS = [
   { key: 'pagadas',        label: 'Pagadas',         icon: CheckCircle, color: 'text-[#16a34a]' },
+  { key: 'confirmadas',    label: 'Confirmadas',     icon: BadgeCheck,  color: 'text-[#0015FF]' },
   { key: 'anuladas',       label: 'Anuladas',         icon: XCircle,     color: 'text-[#FF0033]' },
   { key: 'no_completadas', label: 'No completadas',   icon: AlertCircle, color: 'text-[#F59E0B]' },
   { key: 'papelera',       label: 'Papelera',         icon: Trash,       color: 'text-[#6B6B6B]' },
@@ -19,9 +20,10 @@ function fmtFecha(iso) {
 const DOC_LABEL = { ci: 'Cédula / Pasaporte', licencia: 'Licencia de conducir', factura: 'Factura de servicios', voucher: 'Reserva de hotel' }
 
 const ESTADO_BADGE = {
-  pagada:  { cls: 'bg-[#EDFAF3] border-[#86EFAC] text-[#16a34a]', dot: 'bg-[#16a34a]', label: 'Pagada' },
-  anulada: { cls: 'bg-[#FFF0F2] border-[#FCA5A5] text-[#FF0033]', dot: 'bg-[#FF0033]', label: 'Anulada' },
-  activa:  { cls: 'bg-[#EEF2FF] border-[#A5B4FC] text-[#0015FF]', dot: 'bg-[#0015FF]', label: 'Activa' },
+  pagada:     { cls: 'bg-[#EDFAF3] border-[#86EFAC] text-[#16a34a]', dot: 'bg-[#16a34a]', label: 'Pagada' },
+  confirmada: { cls: 'bg-[#EEF2FF] border-[#A5B4FC] text-[#0015FF]', dot: 'bg-[#0015FF]', label: 'Confirmada' },
+  anulada:    { cls: 'bg-[#FFF0F2] border-[#FCA5A5] text-[#FF0033]', dot: 'bg-[#FF0033]', label: 'Anulada' },
+  activa:     { cls: 'bg-[#EEF2FF] border-[#A5B4FC] text-[#0015FF]', dot: 'bg-[#0015FF]', label: 'Activa' },
 }
 
 function ModalDetalles({ r, onClose }) {
@@ -219,9 +221,7 @@ export default function AdminReservas() {
   const [intentos,  setIntentos]  = useState([])
   const [papelera,  setPapelera]  = useState([])
   const [loading,   setLoading]   = useState(true)
-  const [activas,   setActivas]   = useState(
-    () => localStorage.getItem('bigone_reservas_activas') !== 'false'
-  )
+  const [activas,   setActivas]   = useState(true)
   const [confirmEliminar,    setConfirmEliminar]    = useState(null)
   const [confirmForceDelete, setConfirmForceDelete] = useState(null)
   const [detalleReserva,     setDetalleReserva]     = useState(null)
@@ -236,21 +236,27 @@ export default function AdminReservas() {
       setReservas(todas.filter(r => !r.deleted_at))
       setPapelera(todas.filter(r => !!r.deleted_at))
       setIntentos(ints)
-    } catch {
-      // fallback a localStorage si el backend no responde
-      setReservas(JSON.parse(localStorage.getItem('bigone_reservas_admin') || '[]'))
-      setIntentos(JSON.parse(localStorage.getItem('bigone_intentos') || '[]').filter(i => !i.completada))
+    } catch (e) {
+      alert('No se pudo cargar reservas desde el servidor: ' + e.message)
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => {
+    cargar()
+    api.get('/settings').then(s => setActivas(s.reservas_activas)).catch(() => {})
+  }, [])
 
-  function toggleReservas() {
+  async function toggleReservas() {
     const nuevo = !activas
-    localStorage.setItem('bigone_reservas_activas', String(nuevo))
-    setActivas(nuevo)
+    setActivas(nuevo) // optimista
+    try {
+      await api.patch('/admin/settings', { reservas_activas: nuevo })
+    } catch (e) {
+      setActivas(!nuevo) // revertir si falla
+      alert('No se pudo actualizar la configuración: ' + e.message)
+    }
   }
 
   async function cambiarEstado(id, nuevoEstado) {
@@ -300,19 +306,22 @@ export default function AdminReservas() {
     }
   }
 
-  const pagadas  = reservas.filter(r => r.estado === 'pagada')
-  const anuladas = reservas.filter(r => r.estado === 'anulada')
+  const pagadas     = reservas.filter(r => r.estado === 'pagada')
+  const confirmadas = reservas.filter(r => r.estado === 'confirmada')
+  const anuladas    = reservas.filter(r => r.estado === 'anulada')
 
   const counts = {
     pagadas:        pagadas.length,
+    confirmadas:    confirmadas.length,
     anuladas:       anuladas.length,
     no_completadas: intentos.length,
     papelera:       papelera.length,
   }
 
-  const lista = tab === 'pagadas' ? pagadas
-    : tab === 'anuladas'  ? anuladas
-    : tab === 'papelera'  ? papelera
+  const lista = tab === 'pagadas'     ? pagadas
+    : tab === 'confirmadas' ? confirmadas
+    : tab === 'anuladas'    ? anuladas
+    : tab === 'papelera'    ? papelera
     : intentos
 
   return (
@@ -377,8 +386,8 @@ export default function AdminReservas() {
       ) : (
         <div className="border border-[#E8E8E8] overflow-x-auto">
 
-          {/* PAGADAS / ANULADAS */}
-          {(tab === 'pagadas' || tab === 'anuladas') && (
+          {/* PAGADAS / CONFIRMADAS / ANULADAS */}
+          {(tab === 'pagadas' || tab === 'confirmadas' || tab === 'anuladas') && (
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#E8E8E8] bg-[#FAFAFA]">
@@ -424,12 +433,25 @@ export default function AdminReservas() {
                     <td className="px-3 py-3 text-[#6B6B6B] whitespace-nowrap text-xs">{fmtFecha(r.created_at || r.fecha)}</td>
                     <td className="px-3 py-3">
                       <div className="flex items-center gap-2">
-                        {r.estado === 'pagada' ? (
+                        {r.estado === 'pagada' && (
+                          <>
+                            <button onClick={() => cambiarEstado(r.id, 'confirmada')}
+                              className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-[#0015FF] border border-[#0015FF]/30 px-2 py-1 hover:bg-blue-50 transition-colors whitespace-nowrap">
+                              <BadgeCheck size={11} /> Confirmar
+                            </button>
+                            <button onClick={() => cambiarEstado(r.id, 'anulada')}
+                              className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-[#FF0033] border border-[#FF0033]/30 px-2 py-1 hover:bg-red-50 transition-colors whitespace-nowrap">
+                              <XCircle size={11} /> Anular
+                            </button>
+                          </>
+                        )}
+                        {r.estado === 'confirmada' && (
                           <button onClick={() => cambiarEstado(r.id, 'anulada')}
                             className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-[#FF0033] border border-[#FF0033]/30 px-2 py-1 hover:bg-red-50 transition-colors whitespace-nowrap">
                             <XCircle size={11} /> Anular
                           </button>
-                        ) : (
+                        )}
+                        {r.estado === 'anulada' && (
                           <button onClick={() => cambiarEstado(r.id, 'pagada')}
                             className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-[#16a34a] border border-green-200 px-2 py-1 hover:bg-green-50 transition-colors whitespace-nowrap">
                             <CheckCircle size={11} /> Restaurar
@@ -546,6 +568,7 @@ export default function AdminReservas() {
             <div className="px-5 py-12 text-center">
               <p className="text-[#6B6B6B] text-sm">
                 {tab === 'pagadas'        && 'Sin reservas pagadas aún.'}
+                {tab === 'confirmadas'    && 'Sin reservas confirmadas aún.'}
                 {tab === 'anuladas'       && 'Sin reservas anuladas.'}
                 {tab === 'no_completadas' && 'Sin intentos incompletos.'}
                 {tab === 'papelera'       && 'La papelera está vacía.'}

@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
-import { Plus, Pencil, Trash2, X, Check, ImagePlus, Lock } from 'lucide-react'
-import { vehiculos as vehiculosPredefinidos } from '../../data/vehiculos'
+import { Plus, Pencil, Trash2, X, Check, ImagePlus } from 'lucide-react'
+import { api } from '../../lib/api'
 
 const CATS = [
   { key: 'econ',    label: 'Económico' },
@@ -11,8 +11,6 @@ const CATS = [
   { key: 'lujo',    label: 'Lujo' },
 ]
 
-const PREDEFINIDOS_IDS = new Set(vehiculosPredefinidos.map(v => v.id))
-
 const empty = {
   modelo: '', marca: '', año: new Date().getFullYear(),
   categoria: 'suv', transmision: 'Automático',
@@ -21,24 +19,14 @@ const empty = {
   imagenes: ['', '', ''],
 }
 
-function leerVehiculos() {
-  const adminList = JSON.parse(localStorage.getItem('bigone_vehiculos_admin') || '[]')
-  const overrides  = JSON.parse(localStorage.getItem('bigone_vehiculos_overrides') || '{}')
-  const deletedIds = new Set(JSON.parse(localStorage.getItem('bigone_vehiculos_deleted') || '[]'))
-
-  const predefinidos = vehiculosPredefinidos
-    .filter(v => !deletedIds.has(v.id))
-    .map(v => {
-      const base = {
-        ...v,
-        imagenes: [v.imagen || '', '', ''],
-        disponible: v.disponible !== undefined ? v.disponible : true,
-        _predefinido: true,
-      }
-      return overrides[v.id] ? { ...base, ...overrides[v.id], _predefinido: true } : base
-    })
-
-  return [...predefinidos, ...adminList]
+function normalizar(v) {
+  return {
+    ...v,
+    preciodiario: v.precio_diario,
+    preciosemanal: v.precio_semanal,
+    preciomensual: v.precio_mensual,
+    colores: Array.isArray(v.colores) ? v.colores.join(', ') : (v.colores || ''),
+  }
 }
 
 function Field({ label, children }) {
@@ -58,7 +46,7 @@ function Input({ value, onChange, ...rest }) {
   )
 }
 
-function comprimirImagen(file, maxW = 800, quality = 0.75) {
+function comprimirImagen(file, maxW = 1280, quality = 0.82) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = ev => {
@@ -69,7 +57,7 @@ function comprimirImagen(file, maxW = 800, quality = 0.75) {
         canvas.width  = Math.round(img.width  * scale)
         canvas.height = Math.round(img.height * scale)
         canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
-        resolve(canvas.toDataURL('image/jpeg', quality))
+        canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('toBlob falló')), 'image/jpeg', quality)
       }
       img.onerror = reject
       img.src = ev.target.result
@@ -79,37 +67,38 @@ function comprimirImagen(file, maxW = 800, quality = 0.75) {
   })
 }
 
-function guardarLS(key, value) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value))
-    return true
-  } catch (e) {
-    return false
-  }
-}
-
 function ImageSlot({ index, src, onChange }) {
   const ref = useRef()
+  const [subiendo, setSubiendo] = useState(false)
 
   async function handleFile(e) {
     const file = e.target.files?.[0]
     if (!file) return
+    setSubiendo(true)
     try {
-      const compressed = await comprimirImagen(file)
-      onChange(compressed)
-    } catch {
-      alert('No se pudo procesar la imagen.')
+      const comprimido = await comprimirImagen(file)
+      const formData = new FormData()
+      formData.append('imagen', comprimido, file.name.replace(/\.\w+$/, '.jpg'))
+      const { url } = await api.upload('/admin/vehiculos/upload-imagen', formData)
+      onChange(url)
+    } catch (err) {
+      alert('No se pudo subir la imagen: ' + (err.message || 'error desconocido'))
+    } finally {
+      setSubiendo(false)
+      e.target.value = ''
     }
   }
 
   return (
     <div className="relative">
       <div
-        onClick={() => ref.current.click()}
+        onClick={() => !subiendo && ref.current.click()}
         className={`border-2 border-dashed rounded cursor-pointer flex flex-col items-center justify-center transition-all
           ${src ? 'border-[#0015FF]/30 bg-[#F7F9FF]' : 'border-[#E8E8E8] hover:border-[#0015FF]/40 hover:bg-[#F7F9FF]'}`}
         style={{ height: 100 }}>
-        {src ? (
+        {subiendo ? (
+          <span className="text-[10px] uppercase tracking-widest text-[#0015FF]">Subiendo...</span>
+        ) : src ? (
           <img src={src} alt="" className="w-full h-full object-cover rounded" />
         ) : (
           <div className="flex flex-col items-center gap-1 text-[#BBBBBB]">
@@ -119,7 +108,7 @@ function ImageSlot({ index, src, onChange }) {
           </div>
         )}
       </div>
-      {src && (
+      {src && !subiendo && (
         <button
           onClick={() => onChange('')}
           className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-[#FF0033] text-white rounded-full flex items-center justify-center hover:bg-[#CC0000]">
@@ -131,7 +120,7 @@ function ImageSlot({ index, src, onChange }) {
   )
 }
 
-function Modal({ title, onClose, onSave, saving, form, setForm, esPredefinido }) {
+function Modal({ title, onClose, onSave, saving, form, setForm }) {
   function set(k, v) { setForm(f => ({ ...f, [k]: v })) }
   function setImg(i, v) {
     setForm(f => {
@@ -197,15 +186,6 @@ function Modal({ title, onClose, onSave, saving, form, setForm, esPredefinido })
             <Field label="Precio/mes (Bs)"><Input type="number" value={form.preciomensual} onChange={v => set('preciomensual', Number(v))} /></Field>
           </div>
 
-          <div className="flex items-center gap-2 bg-[#F0F4FF] border border-[#0015FF]/20 rounded px-4 py-3">
-            <Lock size={13} className="text-[#0015FF] shrink-0" />
-            <div>
-              <span className="text-[10px] font-bold uppercase tracking-widest text-[#6B6B6B]">Anticipo de reserva </span>
-              <span className="text-sm font-black text-[#0015FF]">1.000 Bs</span>
-              <span className="text-[10px] text-[#6B6B6B] ml-1">(fijo, no modificable)</span>
-            </div>
-          </div>
-
           <Field label="Colores disponibles">
             <Input value={form.colores || ''} onChange={v => set('colores', v)} placeholder="Blanco, Negro, Gris" />
           </Field>
@@ -238,90 +218,88 @@ function Modal({ title, onClose, onSave, saving, form, setForm, esPredefinido })
 
 export default function AdminVehiculos() {
   const [vehiculos, setVehiculos] = useState([])
+  const [cargando, setCargando] = useState(true)
   const [modal,  setModal]  = useState(null)
   const [form,   setForm]   = useState(empty)
   const [saving, setSaving] = useState(false)
-  const [editandoPredefinido, setEditandoPredefinido] = useState(false)
 
-  function cargar() { setVehiculos(leerVehiculos()) }
+  function cargar() {
+    setCargando(true)
+    api.get('/vehiculos')
+      .then(data => setVehiculos(data.map(normalizar)))
+      .catch(() => alert('No se pudo cargar el catálogo. Revisá tu conexión.'))
+      .finally(() => setCargando(false))
+  }
 
   useEffect(() => { cargar() }, [])
 
   function openNuevo() {
     setForm({ ...empty, imagenes: ['', '', ''] })
-    setEditandoPredefinido(false)
     setModal('nuevo')
   }
 
   function openEdit(v) {
     setForm({
       ...v,
+      marca: v.marca || '',
       features: Array.isArray(v.features) ? v.features.join(', ') : (v.features || ''),
-      imagenes: v.imagenes?.length
-        ? [...v.imagenes, '', '', ''].slice(0, 3)
-        : v.imagen ? [v.imagen, '', ''] : ['', '', ''],
+      imagenes: v.imagen ? [v.imagen, '', ''] : ['', '', ''],
     })
-    setEditandoPredefinido(!!v._predefinido)
     setModal(v.id)
   }
 
-  function guardar() {
+  async function guardar() {
     setSaving(true)
-    const { _predefinido, ...rest } = form
     const payload = {
-      ...rest,
-      features: typeof rest.features === 'string'
-        ? rest.features.split(',').map(s => s.trim()).filter(Boolean)
-        : rest.features,
-      imagen: rest.imagenes?.find(Boolean) || null,
+      modelo: form.modelo,
+      marca: form.marca,
+      año: Number(form.año),
+      categoria: form.categoria,
+      transmision: form.transmision,
+      precio_diario: Number(form.preciodiario) || 0,
+      precio_semanal: form.preciosemanal ? Number(form.preciosemanal) : null,
+      precio_mensual: form.preciomensual ? Number(form.preciomensual) : null,
+      colores: typeof form.colores === 'string'
+        ? form.colores.split(',').map(s => s.trim()).filter(Boolean)
+        : form.colores,
+      features: typeof form.features === 'string'
+        ? form.features.split(',').map(s => s.trim()).filter(Boolean)
+        : form.features,
+      imagen: form.imagenes?.find(Boolean) || null,
+      disponible: !!form.disponible,
     }
 
-    let ok = false
-    if (modal === 'nuevo') {
-      const lista = JSON.parse(localStorage.getItem('bigone_vehiculos_admin') || '[]')
-      ok = guardarLS('bigone_vehiculos_admin', [...lista, { ...payload, id: Date.now() }])
-    } else if (editandoPredefinido) {
-      const overrides = JSON.parse(localStorage.getItem('bigone_vehiculos_overrides') || '{}')
-      overrides[modal] = payload
-      ok = guardarLS('bigone_vehiculos_overrides', overrides)
-    } else {
-      const lista = JSON.parse(localStorage.getItem('bigone_vehiculos_admin') || '[]')
-      ok = guardarLS('bigone_vehiculos_admin', lista.map(v => v.id === modal ? { ...payload, id: modal } : v))
+    try {
+      if (modal === 'nuevo') {
+        await api.post('/admin/vehiculos', payload)
+      } else {
+        await api.put(`/admin/vehiculos/${modal}`, payload)
+      }
+      setModal(null)
+      cargar()
+    } catch (e) {
+      alert('No se pudo guardar: ' + e.message)
+    } finally {
+      setSaving(false)
     }
-
-    setSaving(false)
-    if (!ok) {
-      alert('No se pudo guardar: espacio del navegador lleno. Intenta con imágenes más pequeñas o elimina vehículos antiguos.')
-      return
-    }
-    setModal(null)
-    cargar()
   }
 
-  function eliminar(v) {
+  async function eliminar(v) {
     if (!confirm('¿Eliminar este vehículo del catálogo?')) return
-    if (v._predefinido) {
-      const deleted = JSON.parse(localStorage.getItem('bigone_vehiculos_deleted') || '[]')
-      guardarLS('bigone_vehiculos_deleted', [...deleted, v.id])
-    } else {
-      const lista = JSON.parse(localStorage.getItem('bigone_vehiculos_admin') || '[]')
-      guardarLS('bigone_vehiculos_admin', lista.filter(x => x.id !== v.id))
+    try {
+      await api.delete(`/admin/vehiculos/${v.id}`)
+      cargar()
+    } catch (e) {
+      alert('No se pudo eliminar: ' + e.message)
     }
-    cargar()
   }
-
-  const predefinidosCount = vehiculos.filter(v => v._predefinido).length
 
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="font-display text-3xl font-black uppercase text-[#111] tracking-tight">Vehículos</h1>
-          {predefinidosCount > 0 && (
-            <p className="text-[11px] text-[#6B6B6B] mt-0.5">
-              {predefinidosCount} del catálogo predefinido · {vehiculos.length - predefinidosCount} personalizados
-            </p>
-          )}
+          <p className="text-[11px] text-[#6B6B6B] mt-0.5">{vehiculos.length} vehículos en el catálogo</p>
         </div>
         <button onClick={openNuevo}
           className="flex items-center gap-2 bg-[#FF0033] text-white font-bold uppercase tracking-widest text-xs px-4 py-2.5 hover:bg-[#CC0000]">
@@ -340,10 +318,10 @@ export default function AdminVehiculos() {
           </thead>
           <tbody>
             {vehiculos.map(v => (
-              <tr key={v.id} className={`border-b border-[#E8E8E8]/80 hover:bg-[#F7F7F7] transition-colors ${v._predefinido ? 'bg-[#FFFDF5]' : ''}`}>
+              <tr key={v.id} className="border-b border-[#E8E8E8]/80 hover:bg-[#F7F7F7] transition-colors">
                 <td className="px-4 py-3">
-                  {v.imagen || v.imagenes?.find(Boolean)
-                    ? <img src={v.imagen || v.imagenes.find(Boolean)} alt="" className="w-14 h-10 object-cover rounded border border-[#E8E8E8]" />
+                  {v.imagen
+                    ? <img src={v.imagen} alt="" className="w-14 h-10 object-cover rounded border border-[#E8E8E8]" />
                     : <div className="w-14 h-10 bg-[#F0F0F0] rounded border border-[#E8E8E8] flex items-center justify-center text-[#CCCCCC]">
                         <ImagePlus size={14} />
                       </div>
@@ -373,9 +351,14 @@ export default function AdminVehiculos() {
             ))}
           </tbody>
         </table>
-        {vehiculos.length === 0 && (
+        {!cargando && vehiculos.length === 0 && (
           <div className="px-5 py-12 text-center">
             <p className="text-[#6B6B6B] text-sm mb-1">Sin vehículos en el catálogo.</p>
+          </div>
+        )}
+        {cargando && (
+          <div className="px-5 py-12 text-center">
+            <p className="text-[#6B6B6B] text-sm mb-1">Cargando...</p>
           </div>
         )}
       </div>
@@ -388,7 +371,6 @@ export default function AdminVehiculos() {
           saving={saving}
           form={form}
           setForm={setForm}
-          esPredefinido={editandoPredefinido}
         />
       )}
     </div>

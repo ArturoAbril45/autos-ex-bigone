@@ -13,9 +13,12 @@ use App\Http\Controllers\Api\BigoneAdminLogController;
 use App\Http\Controllers\Api\TiktokVideoController;
 use App\Http\Controllers\Api\BigoneDocController;
 use App\Http\Controllers\Api\BigoneGarantiaController;
+use App\Http\Controllers\Api\UsuariosController;
+use App\Http\Controllers\Api\SettingsController;
 use Illuminate\Support\Facades\Route;
 
 // --- público ---
+Route::get('/settings',                   [SettingsController::class, 'index']);
 Route::get('/tiktok-videos',              [TiktokVideoController::class, 'index']);
 Route::get('/vehiculos', [VehiculoController::class, 'index']);
 Route::get('/vehiculos/{id}', [VehiculoController::class, 'show']);
@@ -41,6 +44,15 @@ Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index']);
 
     Route::apiResource('vehiculos', VehiculoController::class);
+    Route::post('/vehiculos/upload-imagen', [VehiculoController::class, 'uploadImagen']);
+
+    Route::get('/usuarios',           [UsuariosController::class, 'index']);
+    Route::post('/usuarios',          [UsuariosController::class, 'store']);
+    Route::patch('/usuarios/{id}',    [UsuariosController::class, 'update']);
+    Route::delete('/usuarios/{id}',   [UsuariosController::class, 'destroy']);
+
+    Route::patch('/settings',         [SettingsController::class, 'update']);
+
     Route::apiResource('reservas',  ReservaController::class)->only(['index','show','update','destroy']);
     Route::patch('/reservas/{id}',  [ReservaController::class, 'update']);
     Route::get('/clientes',         [ClienteController::class, 'index']);
